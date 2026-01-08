@@ -3,6 +3,7 @@ const cors = require('cors');
 const storage = require('./storage');
 const parser = require('./parser');
 const path = require('path');
+const mongoose = require('mongoose');
 require('dotenv').config();
 
 const app = express();
@@ -20,7 +21,11 @@ if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
 
 // Health check or API root
 app.get('/api/health', (req, res) => {
-    res.json({ status: 'running', database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected' });
+    res.json({
+        status: 'running',
+        version: 'v2.0.1',
+        database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+    });
 });
 
 // Middleware to ensure storage is initialized
@@ -217,12 +222,21 @@ app.post('/api/projects/:projectId/conversations/:conversationId/snapshots', asy
 
 // Serve frontend in production
 if (process.env.NODE_ENV === 'production' || process.env.VERCEL) {
+    // We try multiple possible locations for dist
     const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
+    const altDistPath = path.join(process.cwd(), 'textgpt', 'dist');
+
+    const finalPath = require('fs').existsSync(distPath) ? distPath : altDistPath;
+
+    app.use(express.static(finalPath));
     app.get('*', (req, res) => {
-        // Only serve index.html if the request isn't for an API route
         if (!req.path.startsWith('/api/')) {
-            res.sendFile(path.join(distPath, 'index.html'));
+            const indexPath = path.join(finalPath, 'index.html');
+            if (require('fs').existsSync(indexPath)) {
+                res.sendFile(indexPath);
+            } else {
+                res.status(404).send('Frontend build (index.html) not found in ' + finalPath);
+            }
         }
     });
 }
