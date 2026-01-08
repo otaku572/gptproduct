@@ -1,6 +1,6 @@
 import { Project, Conversation, Snapshot } from '@/types';
 
-const API_BASE = '/api';
+const API_BASE = window.location.hostname === 'localhost' ? 'http://localhost:3001/api' : '/api';
 
 // Projects
 export async function getProjects(): Promise<Project[]> {
