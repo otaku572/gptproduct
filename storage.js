@@ -87,16 +87,7 @@ async function getConversations(projectId) {
 }
 
 async function saveConversation(projectId, name, content, metadata = {}, oldName = null) {
-    // If it's an update (oldName exists) and we're looking for an existing one in this project
-    // Note: The original logic used names as IDs. In MongoDB, we use _id.
-    // However, the API still passes names/conversationId. 
-    // Let's assume conversationId passed from API is the _id if it's a valid ObjectId string.
-    
-    let conversation;
-    
-    // Check if name or oldName can be used to find an existing one
-    // In the original filesystem version, name was the ID.
-    conversation = await Conversation.findOne({ projectId, title: oldName || name });
+    let conversation = await Conversation.findOne({ projectId, title: oldName || name });
 
     if (conversation) {
         conversation.title = name;
@@ -113,16 +104,15 @@ async function saveConversation(projectId, name, content, metadata = {}, oldName
         });
         await conversation.save();
     }
-    
+
     return { ...conversation.toObject(), id: conversation._id };
 }
 
 async function deleteConversation(projectId, conversationId) {
-    // Determine if conversationId is _id or title
-    const query = mongoose.Types.ObjectId.isValid(conversationId) 
-        ? { _id: conversationId } 
+    const query = mongoose.Types.ObjectId.isValid(conversationId)
+        ? { _id: conversationId }
         : { projectId, title: conversationId.replace('.json', '') };
-        
+
     const conversation = await Conversation.findOne(query);
     if (conversation) {
         await Snapshot.deleteMany({ conversationId: conversation._id });
@@ -135,10 +125,10 @@ async function deleteConversation(projectId, conversationId) {
  * SNAPSHOTS
  */
 async function saveSnapshot(projectId, conversationId, version) {
-    const query = mongoose.Types.ObjectId.isValid(conversationId) 
-        ? { _id: conversationId } 
+    const query = mongoose.Types.ObjectId.isValid(conversationId)
+        ? { _id: conversationId }
         : { projectId, title: conversationId.replace('.json', '') };
-        
+
     const conversation = await Conversation.findOne(query);
     if (!conversation) throw new Error('Conversation not found');
 
@@ -153,10 +143,10 @@ async function saveSnapshot(projectId, conversationId, version) {
 }
 
 async function getSnapshots(projectId, conversationId) {
-    const query = mongoose.Types.ObjectId.isValid(conversationId) 
-        ? { _id: conversationId } 
+    const query = mongoose.Types.ObjectId.isValid(conversationId)
+        ? { _id: conversationId }
         : { projectId, title: conversationId.replace('.json', '') };
-        
+
     const conversation = await Conversation.findOne(query);
     if (!conversation) return [];
 
@@ -179,11 +169,14 @@ async function getAllTags() {
             tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1);
         });
     });
-    
+
     return Object.fromEntries(tagCounts);
 }
 
 module.exports = {
+    Project,
+    Conversation,
+    Snapshot,
     initStorage,
     getProjects,
     createProject,

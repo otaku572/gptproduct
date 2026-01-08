@@ -215,11 +215,15 @@ app.post('/api/projects/:projectId/conversations/:conversationId/snapshots', asy
     }
 });
 
-// Serve frontend in production (optional for now)
-if (process.env.NODE_ENV === 'production') {
-    app.use(express.static(path.join(__dirname, 'textgpt/dist')));
+// Serve frontend in production
+if (process.env.NODE_ENV === 'production' || process.env.VERCEL) {
+    const distPath = path.join(process.cwd(), 'dist');
+    app.use(express.static(distPath));
     app.get('*', (req, res) => {
-        res.sendFile(path.join(__dirname, 'textgpt/dist/index.html'));
+        // Only serve index.html if the request isn't for an API route
+        if (!req.path.startsWith('/api/')) {
+            res.sendFile(path.join(distPath, 'index.html'));
+        }
     });
 }
 
