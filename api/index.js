@@ -21,10 +21,21 @@ if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
 
 // Health check or API root
 app.get('/api/health', (req, res) => {
+    const states = {
+        0: 'disconnected',
+        1: 'connected',
+        2: 'connecting',
+        3: 'disconnecting'
+    };
     res.json({
         status: 'running',
-        version: 'v2.0.1',
-        database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+        version: 'v2.1.0',
+        readyState: mongoose.connection.readyState,
+        database: states[mongoose.connection.readyState] || 'unknown',
+        env: {
+            has_uri: !!process.env.MONGODB_URI,
+            node_env: process.env.NODE_ENV
+        }
     });
 });
 
@@ -219,27 +230,6 @@ app.post('/api/projects/:projectId/conversations/:conversationId/snapshots', asy
         res.status(500).json({ error: err.message });
     }
 });
-
-// Serve frontend in production
-if (process.env.NODE_ENV === 'production' || process.env.VERCEL) {
-    // We try multiple possible locations for dist
-    const distPath = path.join(process.cwd(), 'dist');
-    const altDistPath = path.join(process.cwd(), 'textgpt', 'dist');
-
-    const finalPath = require('fs').existsSync(distPath) ? distPath : altDistPath;
-
-    app.use(express.static(finalPath));
-    app.get('*', (req, res) => {
-        if (!req.path.startsWith('/api/')) {
-            const indexPath = path.join(finalPath, 'index.html');
-            if (require('fs').existsSync(indexPath)) {
-                res.sendFile(indexPath);
-            } else {
-                res.status(404).send('Frontend build (index.html) not found in ' + finalPath);
-            }
-        }
-    });
-}
 
 if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
     app.listen(PORT, () => {
