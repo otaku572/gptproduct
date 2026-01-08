@@ -1,6 +1,6 @@
 import { Project, Conversation, Snapshot } from '@/types';
 
-const API_BASE = 'http://localhost:3001/api';
+const API_BASE = '/api';
 
 // Projects
 export async function getProjects(): Promise<Project[]> {

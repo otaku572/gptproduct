@@ -1,25 +1,50 @@
-const fs = require('fs-extra');
-const path = require('path');
+require('dotenv').config();
+const mongoose = require('mongoose');
 
-const DATA_ROOT = path.join(__dirname, 'data');
-const PROJECTS_ROOT = path.join(DATA_ROOT, 'projects');
-const INDEX_ROOT = path.join(DATA_ROOT, 'index');
+// Schemas
+const ProjectSchema = new mongoose.Schema({
+    name: { type: String, required: true },
+    description: String,
+    tags: [String],
+    createdAt: { type: Date, default: Date.now },
+    updatedAt: { type: Date, default: Date.now }
+});
+
+const ConversationSchema = new mongoose.Schema({
+    projectId: { type: mongoose.Schema.Types.ObjectId, ref: 'Project', required: true },
+    title: { type: String, required: true },
+    content: String,
+    metadata: {
+        toc: Array,
+        sections: Array,
+        tags: [String]
+    },
+    updatedAt: { type: Date, default: Date.now }
+});
+
+const SnapshotSchema = new mongoose.Schema({
+    projectId: { type: mongoose.Schema.Types.ObjectId, ref: 'Project', required: true },
+    conversationId: { type: mongoose.Schema.Types.ObjectId, ref: 'Conversation', required: true },
+    version: { type: String, required: true },
+    content: String,
+    createdAt: { type: Date, default: Date.now }
+});
+
+const Project = mongoose.model('Project', ProjectSchema);
+const Conversation = mongoose.model('Conversation', ConversationSchema);
+const Snapshot = mongoose.model('Snapshot', SnapshotSchema);
 
 /**
- * Initialize the data directory structure
+ * Initialize MongoDB connection
  */
 async function initStorage() {
-    await fs.ensureDir(PROJECTS_ROOT);
-    await fs.ensureDir(INDEX_ROOT);
-
-    const tagsPath = path.join(INDEX_ROOT, 'tags.json');
-    if (!(await fs.pathExists(tagsPath))) {
-        await fs.writeJson(tagsPath, { tags: [] });
+    const uri = process.env.MONGODB_URI;
+    if (!uri) {
+        throw new Error('MONGODB_URI is not defined in environment variables');
     }
-
-    const searchIndexPath = path.join(INDEX_ROOT, 'search-index.json');
-    if (!(await fs.pathExists(searchIndexPath))) {
-        await fs.writeJson(searchIndexPath, { lastUpdated: new Date().toISOString(), files: {} });
+    if (mongoose.connection.readyState === 0) {
+        await mongoose.connect(uri);
+        console.log('Connected to MongoDB');
     }
 }
 
@@ -27,49 +52,29 @@ async function initStorage() {
  * PROJECTS
  */
 async function getProjects() {
-    const dirs = await fs.readdir(PROJECTS_ROOT);
-    const projects = [];
-    for (const dir of dirs) {
-        const projectPath = path.join(PROJECTS_ROOT, dir);
-        const stats = await fs.stat(projectPath);
-        if (stats.isDirectory()) {
-            const configPath = path.join(projectPath, 'project.json');
-            let config = { name: dir, description: '', tags: [] };
-            if (await fs.pathExists(configPath)) {
-                config = await fs.readJson(configPath);
-            }
-            projects.push({ ...config, id: dir });
-        }
-    }
-    return projects;
+    return await Project.find().lean();
 }
 
 async function createProject(name) {
-    const projectDir = name.toLowerCase().replace(/\s+/g, '-');
-    const projectPath = path.join(PROJECTS_ROOT, projectDir);
-    await fs.ensureDir(projectPath);
-    await fs.ensureDir(path.join(projectPath, 'conversations'));
-    await fs.ensureDir(path.join(projectPath, 'snapshots'));
-
-    const config = { name, description: '', tags: [], createdAt: new Date().toISOString() };
-    await fs.writeJson(path.join(projectPath, 'project.json'), config);
-    return { ...config, id: projectDir };
+    const project = new Project({ name });
+    await project.save();
+    return { ...project.toObject(), id: project._id };
 }
 
 async function updateProject(id, updates) {
-    const projectPath = path.join(PROJECTS_ROOT, id);
-    const configPath = path.join(projectPath, 'project.json');
-    if (!(await fs.pathExists(configPath))) throw new Error('Project not found');
-
-    const config = await fs.readJson(configPath);
-    const newConfig = { ...config, ...updates, updatedAt: new Date().toISOString() };
-    await fs.writeJson(configPath, newConfig);
-    return { ...newConfig, id };
+    const project = await Project.findByIdAndUpdate(
+        id,
+        { ...updates, updatedAt: Date.now() },
+        { new: true }
+    ).lean();
+    if (!project) throw new Error('Project not found');
+    return { ...project, id: project._id };
 }
 
 async function deleteProject(id) {
-    const projectPath = path.join(PROJECTS_ROOT, id);
-    await fs.remove(projectPath);
+    await Project.findByIdAndDelete(id);
+    await Conversation.deleteMany({ projectId: id });
+    await Snapshot.deleteMany({ projectId: id });
     return { success: true };
 }
 
@@ -77,58 +82,51 @@ async function deleteProject(id) {
  * CONVERSATIONS
  */
 async function getConversations(projectId) {
-    const convRoot = path.join(PROJECTS_ROOT, projectId, 'conversations');
-    if (!(await fs.pathExists(convRoot))) return [];
-
-    const files = await fs.readdir(convRoot);
-    const conversations = [];
-    for (const file of files) {
-        const filePath = path.join(convRoot, file);
-        if (file.endsWith('.json')) {
-            const data = await fs.readJson(filePath);
-            conversations.push({ id: file, title: data.title || file, ...data });
-        } else if (file.endsWith('.md')) {
-            const content = await fs.readFile(filePath, 'utf-8');
-            conversations.push({ id: file, title: file, content, type: 'markdown' });
-        }
-    }
-    return conversations;
+    const conversations = await Conversation.find({ projectId }).lean();
+    return conversations.map(c => ({ ...c, id: c._id }));
 }
 
 async function saveConversation(projectId, name, content, metadata = {}, oldName = null) {
-    const convRoot = path.join(PROJECTS_ROOT, projectId, 'conversations');
-    const filePath = path.join(convRoot, `${name}.json`);
+    // If it's an update (oldName exists) and we're looking for an existing one in this project
+    // Note: The original logic used names as IDs. In MongoDB, we use _id.
+    // However, the API still passes names/conversationId. 
+    // Let's assume conversationId passed from API is the _id if it's a valid ObjectId string.
+    
+    let conversation;
+    
+    // Check if name or oldName can be used to find an existing one
+    // In the original filesystem version, name was the ID.
+    conversation = await Conversation.findOne({ projectId, title: oldName || name });
 
-    // If renaming, remove old file
-    if (oldName && oldName !== name) {
-        const oldPath = path.join(convRoot, `${oldName}.json`);
-        if (await fs.pathExists(oldPath)) {
-            await fs.remove(oldPath);
-        }
+    if (conversation) {
+        conversation.title = name;
+        conversation.content = content;
+        conversation.metadata = { ...conversation.metadata, ...metadata };
+        conversation.updatedAt = Date.now();
+        await conversation.save();
+    } else {
+        conversation = new Conversation({
+            projectId,
+            title: name,
+            content,
+            metadata
+        });
+        await conversation.save();
     }
-
-    const data = {
-        title: name,
-        content,
-        updatedAt: new Date().toISOString(),
-        ...metadata
-    };
-    await fs.writeJson(filePath, data);
-    return { id: `${name}.json`, ...data };
+    
+    return { ...conversation.toObject(), id: conversation._id };
 }
 
 async function deleteConversation(projectId, conversationId) {
-    const filePath = path.join(PROJECTS_ROOT, projectId, 'conversations', conversationId);
-    await fs.remove(filePath);
-
-    // Also remove snapshots
-    const snapRoot = path.join(PROJECTS_ROOT, projectId, 'snapshots');
-    const files = await fs.readdir(snapRoot);
-    const prefix = conversationId.replace('.json', '');
-    for (const file of files) {
-        if (file.startsWith(prefix)) {
-            await fs.remove(path.join(snapRoot, file));
-        }
+    // Determine if conversationId is _id or title
+    const query = mongoose.Types.ObjectId.isValid(conversationId) 
+        ? { _id: conversationId } 
+        : { projectId, title: conversationId.replace('.json', '') };
+        
+    const conversation = await Conversation.findOne(query);
+    if (conversation) {
+        await Snapshot.deleteMany({ conversationId: conversation._id });
+        await Conversation.deleteOne({ _id: conversation._id });
     }
     return { success: true };
 }
@@ -137,56 +135,51 @@ async function deleteConversation(projectId, conversationId) {
  * SNAPSHOTS
  */
 async function saveSnapshot(projectId, conversationId, version) {
-    const convPath = path.join(PROJECTS_ROOT, projectId, 'conversations', conversationId);
-    const snapRoot = path.join(PROJECTS_ROOT, projectId, 'snapshots');
-    const snapPath = path.join(snapRoot, `${conversationId.replace('.json', '')}_v${version}.json`);
+    const query = mongoose.Types.ObjectId.isValid(conversationId) 
+        ? { _id: conversationId } 
+        : { projectId, title: conversationId.replace('.json', '') };
+        
+    const conversation = await Conversation.findOne(query);
+    if (!conversation) throw new Error('Conversation not found');
 
-    await fs.ensureDir(snapRoot);
-    await fs.copy(convPath, snapPath);
-    return { path: snapPath, version };
+    const snapshot = new Snapshot({
+        projectId,
+        conversationId: conversation._id,
+        version,
+        content: conversation.content
+    });
+    await snapshot.save();
+    return { id: snapshot._id, version };
 }
 
 async function getSnapshots(projectId, conversationId) {
-    const snapRoot = path.join(PROJECTS_ROOT, projectId, 'snapshots');
-    if (!(await fs.pathExists(snapRoot))) return [];
+    const query = mongoose.Types.ObjectId.isValid(conversationId) 
+        ? { _id: conversationId } 
+        : { projectId, title: conversationId.replace('.json', '') };
+        
+    const conversation = await Conversation.findOne(query);
+    if (!conversation) return [];
 
-    const files = await fs.readdir(snapRoot);
-    const prefix = conversationId.replace('.json', '');
-    const snapshots = [];
-
-    for (const file of files) {
-        if (file.startsWith(prefix) && file.endsWith('.json')) {
-            const data = await fs.readJson(path.join(snapRoot, file));
-            const versionMatch = file.match(/_v(\d+)\.json$/);
-            snapshots.push({
-                id: file,
-                version: versionMatch ? `v${versionMatch[1]}` : 'v?',
-                createdAt: data.updatedAt || new Date().toISOString(),
-                content: data.content
-            });
-        }
-    }
-    return snapshots;
+    const snapshots = await Snapshot.find({ conversationId: conversation._id }).lean();
+    return snapshots.map(s => ({
+        id: s._id,
+        version: s.version,
+        createdAt: s.createdAt,
+        content: s.content
+    }));
 }
 
 async function getAllTags() {
-    const projects = await getProjects();
+    const conversations = await Conversation.find().lean();
     const tagCounts = new Map();
 
-    for (const project of projects) {
-        const conversations = await getConversations(project.id);
-        for (const conv of conversations) {
-            if (conv.metadata && conv.metadata.tags) {
-                conv.metadata.tags.forEach(tag => {
-                    tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1);
-                });
-            } else if (conv.tags) {
-                conv.tags.forEach(tag => {
-                    tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1);
-                });
-            }
-        }
-    }
+    conversations.forEach(conv => {
+        const tags = conv.metadata?.tags || [];
+        tags.forEach(tag => {
+            tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1);
+        });
+    });
+    
     return Object.fromEntries(tagCounts);
 }
 

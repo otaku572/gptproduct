@@ -1,0 +1,18 @@
+{
+    "version": 2,
+    "rewrites": [
+        {
+            "source": "/api/(.*)",
+            "destination": "/server.js"
+        },
+        {
+            "source": "/(.*)",
+            "destination": "/textgpt/dist/$1"
+        }
+    ],
+    "functions": {
+        "server.js": {
+            "includeFiles": "storage.js,parser.js,data/**"
+        }
+    }
+}

@@ -3,12 +3,20 @@ const cors = require('cors');
 const storage = require('./storage');
 const parser = require('./parser');
 const path = require('path');
+require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
+
+// Connect to MongoDB before starting (for non-serverless environments)
+if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
+    storage.initStorage().catch(err => {
+        console.error('Initial MongoDB connection failed:', err.message);
+    });
+}
 
 app.get('/', (req, res) => {
     res.send('Local Command Center API is running');
@@ -214,6 +222,10 @@ if (process.env.NODE_ENV === 'production') {
     });
 }
 
-app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-});
+if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
+    app.listen(PORT, () => {
+        console.log(`Server running on http://localhost:${PORT}`);
+    });
+}
+
+module.exports = app;
