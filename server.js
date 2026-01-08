@@ -18,8 +18,9 @@ if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
     });
 }
 
-app.get('/', (req, res) => {
-    res.send('Local Command Center API is running');
+// Health check or API root
+app.get('/api/health', (req, res) => {
+    res.json({ status: 'running', database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected' });
 });
 
 // Middleware to ensure storage is initialized

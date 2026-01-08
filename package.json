@@ -5,8 +5,9 @@
     "scripts": {
         "start": "node server.js",
         "dev": "nodemon server.js",
-        "build": "cd textgpt && npm install && npm run build",
-        "vercel-build": "npm run build"
+        "build": "npm run install-frontend && npm run build-frontend && rm -rf dist && mv textgpt/dist dist",
+        "install-frontend": "cd textgpt && npm install",
+        "build-frontend": "cd textgpt && npm run build"
     },
     "dependencies": {
         "cors": "^2.8.5",

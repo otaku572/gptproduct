@@ -3,16 +3,7 @@
     "rewrites": [
         {
             "source": "/api/(.*)",
-            "destination": "/server.js"
-        },
-        {
-            "source": "/(.*)",
-            "destination": "/textgpt/dist/$1"
+            "destination": "server.js"
         }
-    ],
-    "functions": {
-        "server.js": {
-            "includeFiles": "storage.js,parser.js,data/**"
-        }
-    }
+    ]
 }
